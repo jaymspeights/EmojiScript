@@ -1,17 +1,15 @@
-INTEGER, OP, VARIABLE, FUNCTION, SYSCALL, EOF = "INTEGER", "OP", "VARIABLE", "FUNCTION", "SYSCALL", "EOF"
+INTEGER, OP, VARIABLE, FUNCTION, SYSCALL, CONTROL, COMPARISON, EOF = "INTEGER", "OP", "VARIABLE", "FUNCTION", "SYSCALL", "CONTROL", "COMPARISON", "EOF"
 MAIN = "$"
 ANON = "@"
 END = "!"
 ops = ["+", "-", "/", "*", "%", "^", "_", "~"]
+comps = ["=",">","<","."]
 digits = ["q","w","e","r","t","y","u","i","o","p","["]
 v_identifiers = ["a", "s", "d", "f", "g", "h", "j", "k", "l"]
 f_identifiers = ["1","2","3","4","5","6","7","8","9","0", "$"]
-variables = {}
-functions = {}
-contexts = []
-syscode = ""
 syscalls = ["#"]
-floating_op = None
+controls = [":", "?"]
+
 
 class Int(object):
     def __init__(self):
@@ -39,7 +37,8 @@ class Interpreter(object):
     def __init__(self, text):
         self.text = ""
         self.pos = 0
-        self.main = None
+        self.functions = {}
+        self.contexts = []
         self.loadText(text)
         self.current_char = self.text[self.pos]
         self.current_token = None
@@ -61,10 +60,10 @@ class Interpreter(object):
                 if i >= len(text):
                     self.error("Expected function end " + END)
             if text[i] == MAIN:
-                if MAIN in functions:
+                if MAIN in self.functions:
                     self.error("Second main function declaration")
                 self.main = offset + i
-            functions[text[i]] = offset + i
+            self.functions[text[i]] = offset + i
             i = j
         self.text += text
 
@@ -109,6 +108,20 @@ class Interpreter(object):
         self.advance()
         return result
 
+    def control(self):
+        if self.current_char not in controls:
+            self.error("Invalid symbol in identifier - " + self.current_char)
+        result = self.current_char
+        self.advance()
+        return result
+
+    def comp(self):
+        if self.current_char not in comps:
+            self.error("Invalid symbol in identifier - " + self.current_char)
+        result = self.current_char
+        self.advance()
+        return result
+
     def syscall(self):
         if self.current_char not in syscalls:
             self.error("Invalid syscall - " + self.current_char)
@@ -142,6 +155,12 @@ class Interpreter(object):
             if self.current_char in syscalls:
                 return Token(SYSCALL, self.syscall())
 
+            if self.current_char in controls:
+                return Token(CONTROL, self.control())
+
+            if self.current_char in comps:
+                return Token(COMPARISON, self.comp())
+
             if self.current_char == END:
                 return Token(END, None)
 
@@ -156,16 +175,17 @@ class Interpreter(object):
 
 
     def execute(self, function):
-        if function not in functions:
+        if function not in self.functions:
             self.error("Function not found - " + function)
+
         jr = self.pos
-        self.setPos(functions[function])
+        self.setPos(self.functions[function])
 
         self.eat(FUNCTION)
 
         context = {}
-        if len(contexts) > 0:
-            for k, v in contexts[-1].items():
+        if len(self.contexts) > 0:
+            for k, v in self.contexts[-1].items():
                 val = Int()
                 val.setVal(v.getVal())
                 context[k] = val
@@ -174,16 +194,16 @@ class Interpreter(object):
             if not tok.type == VARIABLE:
                 break
             self.eat(VARIABLE)
-            if tok.value not in contexts[-1]:
+            if tok.value not in self.contexts[-1]:
                 self.error("Variable not in scope - " + tok.value)
-            context[tok.value] = contexts[-1][tok.value]
+            context[tok.value] = self.contexts[-1][tok.value]
 
-        contexts.append(context)
+        self.contexts.append(context)
         while True:
             tok = self.current_token
             if tok.type == END:
                 self.eat(END)
-                contexts.pop()
+                self.contexts.pop()
                 self.setPos(jr)
                 return
             else:
@@ -198,8 +218,48 @@ class Interpreter(object):
             return self.call()
         if tok.type == FUNCTION:
             return self.execute(tok.value)
+        if tok.type == CONTROL:
+            return self.flow()
         else:
             self.error("Expected Statement but found " + tok.type)
+
+    def flow(self):
+        control = self.current_token
+        jr = self.pos-2
+        self.eat(CONTROL)
+
+        condition = self.bool_expr()
+
+        if not condition:
+            self.eat(FUNCTION)
+        if condition:
+            func = self.current_token
+            if control.value == ":":
+                self.setPos(jr)
+                self.execute(func.value)
+            else:
+                self.execute(func.value)
+
+    def bool_expr(self):
+        comp = self.current_token
+        self.eat(COMPARISON)
+        val = self.expr()
+        result = True
+        solo = True
+        while self.current_token.type is not FUNCTION:
+            solo = False
+            expr = self.expr()
+            if comp.value == "=":
+                result = result and val == expr
+            if comp.value == ">":
+                result = result and val > expr
+            if comp.value == "<":
+                result = result and val < expr
+            if comp.value == ".":
+                result = result and val != expr
+        if solo:
+            return val>0
+        return result
 
     def call(self):
         tok = self.current_token
@@ -215,17 +275,17 @@ class Interpreter(object):
 
         variable = self.current_token
         if op.value == "~":
-            if variable.value not in contexts[-1]:
-                contexts[-1][variable.value] = Int()
+            if variable.value not in self.contexts[-1]:
+                self.contexts[-1][variable.value] = Int()
             self.eat(VARIABLE)
             value = self.expr()
-            contexts[-1][variable.value].setVal(value)
+            self.contexts[-1][variable.value].setVal(value)
         elif op.value in ops:
-            if variable.value not in contexts[-1]:
+            if variable.value not in self.contexts[-1]:
                 self.eat(VARIABLE)
-                contexts[-1][variable.value] = Int()
+                self.contexts[-1][variable.value] = Int()
             value = self.oper(op.value)
-            contexts[-1][variable.value].setVal(value)
+            self.contexts[-1][variable.value].setVal(value)
 
         else:
             self.error("Invalid statement operator - " + op.value)
@@ -235,14 +295,14 @@ class Interpreter(object):
         if tok.type == INTEGER:
             self.eat(INTEGER)
             return tok.value
-        elif tok.type == OP:
+        elif tok.type == OP and tok.value is not "~":
             self.eat(OP)
             return self.oper(tok.value)
         elif tok.type == VARIABLE:
             self.eat(VARIABLE)
-            if tok.value not in contexts[-1]:
+            if tok.value not in self.contexts[-1]:
                 self.error("Must assign value first - " + tok.value)
-            var = contexts[-1][tok.value]
+            var = self.contexts[-1][tok.value]
             return var.getVal()
         else:
             return None
@@ -280,9 +340,9 @@ class Interpreter(object):
                 elif type == "_":
                     return value-1
                 else:
-                    self.error("Invalid operation in expression- " + op.value)
+                    self.error("Invalid operation in expression- " + type)
     def run(self):
-        if MAIN not in functions:
+        if MAIN not in self.functions:
             self.error("No main found")
         self.execute(MAIN)
 
