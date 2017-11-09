@@ -1,3 +1,7 @@
+import sys
+import parser
+import re
+
 INTEGER, OP, VARIABLE, FUNCTION, SYSCALL, CONTROL, COMPARISON, EOF = "INTEGER", "OP", "VARIABLE", "FUNCTION", "SYSCALL", "CONTROL", "COMPARISON", "EOF"
 MAIN = "$"
 ANON = "@"
@@ -20,33 +24,43 @@ class Int(object):
         self.value=value
 
 class Token(object):
-    def __init__(self, type, value):
+    def __init__(self, type, pos, value):
         self.type = type
         self.value = value
+        self.pos = pos
 
     def __str__(self):
-        return 'Token({type}, {value})'.format(
+        return 'Token({type}, {value}, {pos})'.format(
             type=self.type,
-            value=repr(self.value)
+            value=repr(self.value),
+            pos=repr(self.pos)
         )
 
     def __repr__(self):
         return self.__str__()
 
 class Interpreter(object):
-    def __init__(self, text):
+    def __init__(self):
         self.text = ""
         self.pos = 0
         self.functions = {}
         self.contexts = []
-        self.loadText(text)
-        self.current_char = self.text[self.pos]
+        self.args = []
+        self.current_char = None
         self.current_token = None
 
-    def loadText(self, text):
+    def arg(self, argv):
+        self.args.append(argv)
+
+    def load(self, text):
         i = 0
         offset = len(self.text)
         while i < len(text):
+            while text[i] is not None and text[i].isspace():
+                i+=1
+                if i >= len(text):
+                    self.text += text
+                    return
             if text[i] not in f_identifiers:
                 self.error("Expected function declaration but found - " + text[i])
             bal = 1
@@ -139,40 +153,71 @@ class Interpreter(object):
             if self.current_char.isspace():
                 self.skip_whitespace()
                 continue
-
             if self.current_char in digits:
-                return Token(INTEGER, self.integer())
+                return Token(INTEGER, self.pos, self.integer())
 
             if self.current_char in  ops:
-                return Token(OP, self.op())
+                return Token(OP, self.pos, self.op())
 
             if self.current_char in v_identifiers:
-                return Token(VARIABLE, self.variable())
+                return Token(VARIABLE, self.pos, self.variable())
 
             if self.current_char in f_identifiers:
-                return Token(FUNCTION, self.function())
+                return Token(FUNCTION, self.pos, self.function())
 
             if self.current_char in syscalls:
-                return Token(SYSCALL, self.syscall())
+                return Token(SYSCALL, self.pos, self.syscall())
 
             if self.current_char in controls:
-                return Token(CONTROL, self.control())
+                return Token(CONTROL, self.pos, self.control())
 
             if self.current_char in comps:
-                return Token(COMPARISON, self.comp())
+                return Token(COMPARISON, self.pos, self.comp())
 
             if self.current_char == END:
-                return Token(END, None)
+                return Token(END, self.pos, None)
 
             self.error("Unexpected Symbol at - " + self.current_char)
         return Token(EOF, None)
 
     def eat(self, token_type):
+        self.prev = self.current_token.pos
         if self.current_token.type == token_type:
             self.current_token = self.get_next_token()
         else:
             self.error("Expected " + token_type + " but found " + self.current_token.type)
 
+
+    def scope(self):
+        context = {}
+        if len(self.contexts) > 0:
+            for k, v in self.contexts[-1].items():
+                val = Int()
+                val.setVal(v.getVal())
+                context[k] = val
+            while True:
+                tok = self.current_token
+                if not tok.type == VARIABLE:
+                    break
+                self.eat(VARIABLE)
+                if tok.value not in self.contexts[-1]:
+                    self.error("Variable not in scope - " + tok.value)
+                context[tok.value] = self.contexts[-1][tok.value]
+        else:
+            i = 0
+            while True:
+                tok = self.current_token
+                if not tok.type == VARIABLE:
+                    break
+                self.eat(VARIABLE)
+                if i >= len(self.args):
+                    self.error("Not enough args")
+                val = Int()
+                val.setVal(int(self.args[i]))
+                context[tok.value] = val
+                i += 1
+
+        self.contexts.append(context)
 
     def execute(self, function):
         if function not in self.functions:
@@ -183,22 +228,8 @@ class Interpreter(object):
 
         self.eat(FUNCTION)
 
-        context = {}
-        if len(self.contexts) > 0:
-            for k, v in self.contexts[-1].items():
-                val = Int()
-                val.setVal(v.getVal())
-                context[k] = val
-        while True:
-            tok = self.current_token
-            if not tok.type == VARIABLE:
-                break
-            self.eat(VARIABLE)
-            if tok.value not in self.contexts[-1]:
-                self.error("Variable not in scope - " + tok.value)
-            context[tok.value] = self.contexts[-1][tok.value]
+        self.scope()
 
-        self.contexts.append(context)
         while True:
             tok = self.current_token
             if tok.type == END:
@@ -225,8 +256,9 @@ class Interpreter(object):
 
     def flow(self):
         control = self.current_token
-        jr = self.pos-2
+        jr = self.pos - 2
         self.eat(CONTROL)
+
 
         condition = self.bool_expr()
 
@@ -347,15 +379,31 @@ class Interpreter(object):
         self.execute(MAIN)
 
 def main():
-    while True:
-        try:
-            text = input("☺>")
-        except EOFError:
-            break
-        if not text:
-            continue
-        interpreter = Interpreter(text)
+    if len(sys.argv) > 1:
+        i = 1
+        fn = re.compile(r'.*\.es$')
+        interpreter = Interpreter()
+        while i < len(sys.argv):
+            text = ""
+            if fn.match(sys.argv[i]):
+                with open(sys.argv[i]) as f:
+                    text += f.read()
+                interpreter.load(text)
+            else:
+                interpreter.arg(sys.argv[i])
+            i+=1
         interpreter.run()
+    else:
+        while True:
+            try:
+                text = input("☺>")
+            except EOFError:
+                break
+            if not text:
+                continue
+            interpreter = Interpreter()
+            interpreter.load(text)
+            interpreter.run()
 
 if __name__ == '__main__':
     main()
