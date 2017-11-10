@@ -2,23 +2,31 @@ import sys
 import parser
 import re
 
-PRINT, EQUAL, GREATER, LESSER, INEQUAL, PLUS, MINUS, DIVIDE, MULTIPLY, MOD, INCREMENT, DECREMENT, ASSIGN, INTEGER, OP, VARIABLE, FUNCTION, SYSCALL, CONTROL, COMPARISON, MAIN, ANON, END, WHILE, IF, EOF = "PRINT", "EQUAL","GREATER","LESSER","INEQUAL", "PLUS", "MINUS", "DIVIDE", "MULTIPLY", "MOD", "INCREMENT", "DECREMENT", "ASSIGN", "INTEGER", "OP", "VARIABLE", "FUNCTION", "SYSCALL", "CONTROL", "COMPARISON", -100, "ANON", "END", "WHILE", "IF", "EOF"
+EQUAL, GREATER, LESSER, INEQUAL, INTEGER, SOP, EOP, VARIABLE, FUNCTION, SYSCALL, CONTROL, COMPARISON, MAIN, ANON, END, EOF = "EQUAL","GREATER","LESSER","INEQUAL", "INTEGER", "STATEMENT OP", "EXPRESSION OP", "VARIABLE", "FUNCTION", "SYSCALL", "CONTROL", "COMPARISON", "MAIN", "ANON", "END", "EOF"
+WHILE, IF, ELSE = "WHILE", "IF", "ELSE"
+PRINT = "PRINT"
+PLUS, MINUS, DIVIDE, MULTIPLY, MOD, INCREMENT, DECREMENT = "PLUS", "MINUS", "DIVIDE", "MULTIPLY", "MOD", "INCREMENT", "DECREMENT"
+SPLUS, SMINUS, SDIVIDE, SMULTIPLY, SMOD, SINCREMENT, SDECREMENT, ASSIGN = ":PLUS", ":MINUS", ":DIVIDE", ":MULTIPLY", ":MOD", ":INCREMENT", ":DECREMENT", "ASSIGN"
 
-ops = [PLUS, MINUS, DIVIDE, MULTIPLY, MOD, INCREMENT, DECREMENT, ASSIGN]
+e_ops = [PLUS, MINUS, DIVIDE, MULTIPLY, MOD, INCREMENT, DECREMENT]
+s_ops = [SPLUS, SMINUS, SDIVIDE, SMULTIPLY, SMOD, SINCREMENT, SDECREMENT, ASSIGN]
 comps = [EQUAL,GREATER,LESSER,INEQUAL]
 digits = range(0,11)
 v_identifiers = range(100,200)
-f_identifiers = range(-200,-99)
+f_identifiers = list(range(-199,-99)) + [ANON, MAIN]
 syscalls = [PRINT]
-controls = [WHILE, IF]
+controls = [WHILE, IF, ELSE]
 
-emoji_map = {"@":ANON,"!":END, ":":WHILE,"?":IF,
-"+":PLUS,"-":MINUS,"/":DIVIDE,"*":MULTIPLY,"%":MOD,"^":INCREMENT,"_":DECREMENT,"~":ASSIGN,"=":EQUAL,">":GREATER,"<":LESSER,".":INEQUAL,
-"q":0,"w":1,"e":2,"r":3,"t":4,"y":5,"u":6,"i":7,"o":8,"p":9,"[":10,
-"a":100,"s":101,"d":102,"f":103,"g":104,"h":105,"j":106,"k":107,"l":108,
-"$":-100,"1":-101,"2":-102,"3":-103,"4":-104,"5":-105,"6":-106,"7":-107,"8":-108,"9":-109,"0":-110,
-"#":PRINT
+emoji_map = {"{":ANON,"}":END, "while":WHILE,"if":IF, "else":ELSE,
+"+":PLUS,"-":MINUS,"/":DIVIDE,"*":MULTIPLY,"%":MOD,"^":INCREMENT,"_":DECREMENT,
+":+":SPLUS,":-":SMINUS,":/":SDIVIDE,":*":SMULTIPLY,":%":SMOD,":^":SINCREMENT,":_":SDECREMENT,"assign":ASSIGN,
+"=":EQUAL,">":GREATER,"<":LESSER,".":INEQUAL,
+"0":0,"1":1,"2":2,"3":3,"4":4,"5":5,"6":6,"7":7,"8":8,"9":9,"ten":10,
+"v1":100,"v2":101,"v3":102,"v4":103,"v5":104,"v6":105,"v7":106,"v8":107,"v9":108,
+"$":MAIN,"f1":-101,"f2":-102,"f3":-103,"f4":-104,"f5":-105,"f6":-106,"f7":-107,"f8":-108,"f9":-109,"f0":-100,
+"print":PRINT
 }
+
 
 
 class Int(object):
@@ -62,19 +70,16 @@ class Interpreter(object):
         return list(emoji_map.keys())[list(emoji_map.values()).index(char)]
 
     def scan(self, raw):
-        i = 0
-        j = 0
+        i = -1
         val = ""
         text = []
-        while i < len(raw):
+        while i < len(raw)-1:
+            i+=1
             if raw[i].isspace():
-                i+=1
                 continue
             val = raw[i]
             if val in emoji_map:
                 text.append(emoji_map[val])
-                j+=1
-                i+=1
                 continue
             while True:
                 i+=1
@@ -83,8 +88,6 @@ class Interpreter(object):
                 val+=raw[i]
                 if val in emoji_map:
                     text.append(emoji_map[val])
-                    j+=1
-                    i+=1
                     break
         return text
 
@@ -93,7 +96,7 @@ class Interpreter(object):
         i = 0
         offset = len(self.text)
         while i < len(text):
-            if text[i] not in f_identifiers:
+            if text[i] not in f_identifiers or text[i] is ANON:
                 self.error("Expected function declaration but found - " + self.symbolize(text[i]))
             bal = 1
             j=i+1
@@ -137,52 +140,51 @@ class Interpreter(object):
         return int(result)
 
     def variable(self):
-        if self.current_char not in v_identifiers:
-            self.error("Invalid symbol in identifier - " + self.current_char)
         result = self.current_char
         self.advance()
         return result
 
     def function(self):
-        if self.current_char not in f_identifiers:
-            self.error("Invalid symbol in identifier - " + self.current_char)
         result = self.current_char
         self.advance()
         return result
 
     def control(self):
-        if self.current_char not in controls:
-            self.error("Invalid symbol in identifier - " + self.current_char)
         result = self.current_char
         self.advance()
         return result
 
     def comp(self):
-        if self.current_char not in comps:
-            self.error("Invalid symbol in identifier - " + self.current_char)
         result = self.current_char
         self.advance()
         return result
 
     def syscall(self):
-        if self.current_char not in syscalls:
-            self.error("Invalid syscall - " + self.current_char)
         result = self.current_char
         self.advance()
         return result
 
-    def op(self):
+    def sop(self):
+        result = self.current_char
+        self.advance()
+        return result
+
+    def eop(self):
         result = self.current_char
         self.advance()
         return result
 
     def get_next_token(self):
+        print(self.current_token)
         while self.current_char is not None:
             if self.current_char in digits:
                 return Token(INTEGER, self.pos, self.integer())
 
-            if self.current_char in  ops:
-                return Token(OP, self.pos, self.op())
+            if self.current_char in  s_ops:
+                return Token(SOP, self.pos, self.sop())
+
+            if self.current_char in  e_ops:
+                return Token(EOP, self.pos, self.eop())
 
             if self.current_char in v_identifiers:
                 return Token(VARIABLE, self.pos, self.variable())
@@ -206,7 +208,6 @@ class Interpreter(object):
         return Token(EOF, None)
 
     def eat(self, token_type):
-        self.prev = self.current_token.pos
         if self.current_token.type == token_type:
             self.current_token = self.get_next_token()
         else:
@@ -244,13 +245,9 @@ class Interpreter(object):
 
         self.contexts.append(context)
 
-    def execute(self, function):
-        if function not in self.functions:
-            self.error("Function not found - " + self.symbolize(function))
-
+    def execute(self, pos, jmp):
         jr = self.pos
-        self.setPos(self.functions[function])
-
+        self.setPos(pos)
         self.eat(FUNCTION)
 
         self.scope()
@@ -260,7 +257,8 @@ class Interpreter(object):
             if tok.type == END:
                 self.eat(END)
                 self.contexts.pop()
-                self.setPos(jr)
+                if jmp:
+                    self.setPos(jr)
                 return
             else:
                 self.statement()
@@ -268,12 +266,15 @@ class Interpreter(object):
 
     def statement(self):
         tok = self.current_token
-        if tok.type == OP:
+        if tok.type == SOP:
             return self.assign()
         if tok.type == SYSCALL:
             return self.call()
         if tok.type == FUNCTION:
-            return self.execute(tok.value)
+            if tok.value in self.functions:
+                return self.execute(self.functions[tok.value], True)
+            elif tok.value is ANON:
+                return self.execute(self.pos-1, False)
         if tok.type == CONTROL:
             return self.flow()
         else:
@@ -286,16 +287,38 @@ class Interpreter(object):
 
 
         condition = self.bool_expr()
-
-        if not condition:
-            self.eat(FUNCTION)
+        func = self.current_token
+        if func.value not in self.functions and func.value is not ANON:
+            error("Function not initialized - " + func.value)
         if condition:
-            func = self.current_token
             if control.value == WHILE:
                 self.setPos(jr)
-                self.execute(func.value)
+                if func.value == ANON:
+                    pos = self.pos-1
+                else:
+                    pos = self.functions[func.value]
+                self.execute(pos, True)
             else:
-                self.execute(func.value)
+                if func.value == ANON:
+                    pos = self.pos-1
+                    self.execute(pos, False)
+                else:
+                    pos = self.functions[func.value]
+                    self.execute(pos, True)
+
+        else:
+            if func.value == ANON:
+                self.skipAnon()                             # WRITE THIS FUNCTION
+            else:
+                self.eat(FUNCTION)
+            if self.current_token.value == ELSE:
+                self.eat(CONTROL)
+                if func.value == ANON:
+                    pos = self.pos-1
+                    self.execute(pos, False)
+                else:
+                    pos = self.functions[func.value]
+                    self.execute(pos, True)
 
     def bool_expr(self):
         comp = self.current_token
@@ -331,20 +354,49 @@ class Interpreter(object):
 
     def assign(self):
         op = self.current_token
-        self.eat(OP)
+        self.eat(SOP)
 
         variable = self.current_token
+        if variable.type is not VARIABLE:
+            error("Expected Vairable but found - " + self.symbolize(variable.value))
         if op.value == ASSIGN:
-            if variable.value not in self.contexts[-1]:
-                self.contexts[-1][variable.value] = Int()
             self.eat(VARIABLE)
             value = self.expr()
+            if variable.value not in self.contexts[-1]:
+                self.contexts[-1][variable.value] = Int()
             self.contexts[-1][variable.value].setVal(value)
-        elif op.value in ops:
+        elif op.value in s_ops:
+            if op.value == SMULTIPLY:
+                type = MULTIPLY
+            elif op.value == SDIVIDE:
+                type = DIVIDE
+            elif op.value == SPLUS:
+                type = PLUS
+            elif op.value == SMINUS:
+                type = MINUS
+            elif op.value == SMOD:
+                type = MOD
+            elif op.value == SINCREMENT:
+                self.eat(VARIABLE)
+                if variable.value not in self.contexts[-1]:
+                    self.error("Must assign value first - " + self.symbolize(variable.value))
+                self.contexts[-1][variable.value].setVal(self.contexts[-1][variable.value].getVal()+1)
+                return
+            elif op.value == SDECREMENT:
+                self.eat(VARIABLE)
+                if variable.value not in self.contexts[-1]:
+                    self.error("Must assign value first - " + self.symbolize(variable.value))
+                self.contexts[-1][variable.value].setVal(self.contexts[-1][variable.value].getVal()-1)
+                return
+            else:
+                self.error("Invalid statement - " + self.symbolize(op.value))
+
             if variable.value not in self.contexts[-1]:
                 self.eat(VARIABLE)
+                value = self.oper(type)
                 self.contexts[-1][variable.value] = Int()
-            value = self.oper(op.value)
+            else:
+                value = self.oper(type)
             self.contexts[-1][variable.value].setVal(value)
 
         else:
@@ -355,8 +407,8 @@ class Interpreter(object):
         if tok.type == INTEGER:
             self.eat(INTEGER)
             return tok.value
-        elif tok.type == OP:# and tok.value is not ASSIGN:
-            self.eat(OP)
+        elif tok.type == EOP:
+            self.eat(EOP)
             return self.oper(tok.value)
         elif tok.type == VARIABLE:
             self.eat(VARIABLE)
@@ -404,7 +456,7 @@ class Interpreter(object):
     def run(self):
         if MAIN not in self.functions:
             self.error("No main found")
-        self.execute(MAIN)
+        self.execute(self.functions[MAIN], False)
 
 def main():
     if len(sys.argv) > 1:
