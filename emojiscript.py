@@ -2,17 +2,23 @@ import sys
 import parser
 import re
 
-INTEGER, OP, VARIABLE, FUNCTION, SYSCALL, CONTROL, COMPARISON, EOF = "INTEGER", "OP", "VARIABLE", "FUNCTION", "SYSCALL", "CONTROL", "COMPARISON", "EOF"
-MAIN = "$"
-ANON = "@"
-END = "!"
-ops = ["+", "-", "/", "*", "%", "^", "_", "~"]
-comps = ["=",">","<","."]
-digits = ["q","w","e","r","t","y","u","i","o","p","["]
-v_identifiers = ["a", "s", "d", "f", "g", "h", "j", "k", "l"]
-f_identifiers = ["1","2","3","4","5","6","7","8","9","0", "$"]
-syscalls = ["#"]
-controls = [":", "?"]
+PRINT, EQUAL, GREATER, LESSER, INEQUAL, PLUS, MINUS, DIVIDE, MULTIPLY, MOD, INCREMENT, DECREMENT, ASSIGN, INTEGER, OP, VARIABLE, FUNCTION, SYSCALL, CONTROL, COMPARISON, MAIN, ANON, END, WHILE, IF, EOF = "PRINT", "EQUAL","GREATER","LESSER","INEQUAL", "PLUS", "MINUS", "DIVIDE", "MULTIPLY", "MOD", "INCREMENT", "DECREMENT", "ASSIGN", "INTEGER", "OP", "VARIABLE", "FUNCTION", "SYSCALL", "CONTROL", "COMPARISON", -100, "ANON", "END", "WHILE", "IF", "EOF"
+
+ops = [PLUS, MINUS, DIVIDE, MULTIPLY, MOD, INCREMENT, DECREMENT, ASSIGN]
+comps = [EQUAL,GREATER,LESSER,INEQUAL]
+digits = range(0,11)
+v_identifiers = range(100,200)
+f_identifiers = range(-200,-99)
+syscalls = [PRINT]
+controls = [WHILE, IF]
+
+emoji_map = {"@":ANON,"!":END, ":":WHILE,"?":IF,
+"+":PLUS,"-":MINUS,"/":DIVIDE,"*":MULTIPLY,"%":MOD,"^":INCREMENT,"_":DECREMENT,"~":ASSIGN,"=":EQUAL,">":GREATER,"<":LESSER,".":INEQUAL,
+"q":0,"w":1,"e":2,"r":3,"t":4,"y":5,"u":6,"i":7,"o":8,"p":9,"[":10,
+"a":100,"s":101,"d":102,"f":103,"g":104,"h":105,"j":106,"k":107,"l":108,
+"$":-100,"1":-101,"2":-102,"3":-103,"4":-104,"5":-105,"6":-106,"7":-107,"8":-108,"9":-109,"0":-110,
+"#":PRINT
+}
 
 
 class Int(object):
@@ -41,7 +47,7 @@ class Token(object):
 
 class Interpreter(object):
     def __init__(self):
-        self.text = ""
+        self.text = []
         self.pos = 0
         self.functions = {}
         self.contexts = []
@@ -52,17 +58,43 @@ class Interpreter(object):
     def arg(self, argv):
         self.args.append(argv)
 
-    def load(self, text):
+    def symbolize(self, char):
+        return list(emoji_map.keys())[list(emoji_map.values()).index(char)]
+
+    def scan(self, raw):
+        i = 0
+        j = 0
+        val = ""
+        text = []
+        while i < len(raw):
+            if raw[i].isspace():
+                i+=1
+                continue
+            val = raw[i]
+            if val in emoji_map:
+                text.append(emoji_map[val])
+                j+=1
+                i+=1
+                continue
+            while True:
+                i+=1
+                if i >= len(raw) or raw[i].isspace():
+                    raise Exception("Error Parsing")
+                val+=raw[i]
+                if val in emoji_map:
+                    text.append(emoji_map[val])
+                    j+=1
+                    i+=1
+                    break
+        return text
+
+    def load(self, raw_text):
+        text = self.scan(raw_text)
         i = 0
         offset = len(self.text)
         while i < len(text):
-            while text[i] is not None and text[i].isspace():
-                i+=1
-                if i >= len(text):
-                    self.text += text
-                    return
             if text[i] not in f_identifiers:
-                self.error("Expected function declaration but found - " + text[i])
+                self.error("Expected function declaration but found - " + self.symbolize(text[i]))
             bal = 1
             j=i+1
             while bal > 0:
@@ -97,14 +129,10 @@ class Interpreter(object):
         else:
             self.current_char = self.text[self.pos]
 
-    def skip_whitespace(self):
-        while self.current_char is not None and self.current_char.isspace():
-            self.advance()
-
     def integer(self):
         result = ""
         while self.current_char is not None and self.current_char in digits:
-            result += str(digits.index(self.current_char))
+            result += str(self.current_char)
             self.advance()
         return int(result)
 
@@ -150,9 +178,6 @@ class Interpreter(object):
 
     def get_next_token(self):
         while self.current_char is not None:
-            if self.current_char.isspace():
-                self.skip_whitespace()
-                continue
             if self.current_char in digits:
                 return Token(INTEGER, self.pos, self.integer())
 
@@ -201,7 +226,7 @@ class Interpreter(object):
                     break
                 self.eat(VARIABLE)
                 if tok.value not in self.contexts[-1]:
-                    self.error("Variable not in scope - " + tok.value)
+                    self.error("Variable not in scope - " + self.symbolize(tok.value))
                 context[tok.value] = self.contexts[-1][tok.value]
         else:
             i = 0
@@ -221,7 +246,7 @@ class Interpreter(object):
 
     def execute(self, function):
         if function not in self.functions:
-            self.error("Function not found - " + function)
+            self.error("Function not found - " + self.symbolize(function))
 
         jr = self.pos
         self.setPos(self.functions[function])
@@ -266,7 +291,7 @@ class Interpreter(object):
             self.eat(FUNCTION)
         if condition:
             func = self.current_token
-            if control.value == ":":
+            if control.value == WHILE:
                 self.setPos(jr)
                 self.execute(func.value)
             else:
@@ -281,13 +306,13 @@ class Interpreter(object):
         while self.current_token.type is not FUNCTION:
             solo = False
             expr = self.expr()
-            if comp.value == "=":
+            if comp.value == EQUAL:
                 result = result and val == expr
-            if comp.value == ">":
+            if comp.value == GREATER:
                 result = result and val > expr
-            if comp.value == "<":
+            if comp.value == LESSER:
                 result = result and val < expr
-            if comp.value == ".":
+            if comp.value == INEQUAL:
                 result = result and val != expr
         if solo:
             return val>0
@@ -297,16 +322,19 @@ class Interpreter(object):
         tok = self.current_token
         self.eat(SYSCALL)
 
-        if tok.value == "#":
+        if tok.value == PRINT:
             value = self.expr()
             print(value)
+            return value
+        else:
+            error("Unknown SYSCALL - " + self.symbolize(tok.value))
 
     def assign(self):
         op = self.current_token
         self.eat(OP)
 
         variable = self.current_token
-        if op.value == "~":
+        if op.value == ASSIGN:
             if variable.value not in self.contexts[-1]:
                 self.contexts[-1][variable.value] = Int()
             self.eat(VARIABLE)
@@ -320,20 +348,20 @@ class Interpreter(object):
             self.contexts[-1][variable.value].setVal(value)
 
         else:
-            self.error("Invalid statement operator - " + op.value)
+            self.error("Invalid statement operator - " + self.symbolize(op.value))
 
     def expr(self):
         tok = self.current_token
         if tok.type == INTEGER:
             self.eat(INTEGER)
             return tok.value
-        elif tok.type == OP and tok.value is not "~":
+        elif tok.type == OP:# and tok.value is not ASSIGN:
             self.eat(OP)
             return self.oper(tok.value)
         elif tok.type == VARIABLE:
             self.eat(VARIABLE)
             if tok.value not in self.contexts[-1]:
-                self.error("Must assign value first - " + tok.value)
+                self.error("Must assign value first - " + self.symbolize(tok.value))
             var = self.contexts[-1][tok.value]
             return var.getVal()
         else:
@@ -347,32 +375,32 @@ class Interpreter(object):
             if value is None:
                 return result
             else:
-                if type == "*":
+                if type == MULTIPLY:
                     if result is None:
                         result = 1;
                     result = result * value
-                elif type == "/":
+                elif type == DIVIDE:
                     if result is None:
                         result = 1;
                     result = result / value
-                elif type == "+":
+                elif type == PLUS:
                     if result is None:
                         result = 0;
                     result = result + value
-                elif type == "-":
+                elif type == MINUS:
                     if result is None:
                         result = 0;
                     result = result - value
-                elif type == "%":
+                elif type == MOD:
                     if result is None:
                         result = 0;
                     result = result % value
-                elif type == "^":
+                elif type == INCREMENT:
                     return value+1
-                elif type == "_":
+                elif type == DECREMENT:
                     return value-1
                 else:
-                    self.error("Invalid operation in expression- " + type)
+                    self.error("Invalid operation in expression- " + self.symbolize(type))
     def run(self):
         if MAIN not in self.functions:
             self.error("No main found")
@@ -388,6 +416,7 @@ def main():
             if fn.match(sys.argv[i]):
                 with open(sys.argv[i]) as f:
                     text += f.read()
+                f.close()
                 interpreter.load(text)
             else:
                 interpreter.arg(sys.argv[i])
