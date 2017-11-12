@@ -13,10 +13,11 @@ s_ops = [SPLUS, SMINUS, SDIVIDE, SMULTIPLY, SMOD, SINCREMENT, SDECREMENT, ASSIGN
 comps = [EQUAL,GREATER,LESSER,INEQUAL]
 digits = range(0,11)
 v_identifiers = range(100,200)
-f_identifiers = list(range(-199,-99)) + [ANON, MAIN]
+f_identifiers = list(range(-199,-99)) + [MAIN]
 syscalls = [PRINT]
 controls = [WHILE, IF, ELSE]
 
+COMMENT = "`"
 emoji_map = {"{":ANON,"}":END, "while":WHILE,"if":IF, "else":ELSE,
 "+":PLUS,"-":MINUS,"/":DIVIDE,"*":MULTIPLY,"%":MOD,"^":INCREMENT,"_":DECREMENT,
 ":+":SPLUS,":-":SMINUS,":/":SDIVIDE,":*":SMULTIPLY,":%":SMOD,":^":SINCREMENT,":_":SDECREMENT,"assign":ASSIGN,
@@ -62,6 +63,7 @@ class Interpreter(object):
         self.args = []
         self.current_char = None
         self.current_token = None
+        self.anons = 0
 
     def arg(self, argv):
         self.args.append(argv)
@@ -75,6 +77,13 @@ class Interpreter(object):
         text = []
         while i < len(raw)-1:
             i+=1
+            if raw[i] is COMMENT:
+                i += 1
+                while raw[i] is not COMMENT:
+                    i += 1
+                    if i >= len(raw):
+                        self.error("Error Parsing")
+                i += 1
             if raw[i].isspace():
                 continue
             val = raw[i]
@@ -96,25 +105,38 @@ class Interpreter(object):
         i = 0
         offset = len(self.text)
         while i < len(text):
-            if text[i] not in f_identifiers or text[i] is ANON:
+            if text[i] not in f_identifiers:
                 self.error("Expected function declaration but found - " + self.symbolize(text[i]))
-            bal = 1
             j=i+1
-            while bal > 0:
-                if text[j] == ANON:
-                    bal += 1
-                if text[j] == END:
-                    bal -= 1
+            while text[j] is not END:
+                if text[j] is ANON:
+                    self.sliceAnon(j, text)
                 j += 1
-                if i >= len(text):
+                if j >= len(text):
                     self.error("Expected function end " + END)
             if text[i] == MAIN:
                 if MAIN in self.functions:
                     self.error("Second main function declaration")
                 self.main = offset + i
             self.functions[text[i]] = offset + i
-            i = j
+            i = j+1
         self.text += text
+
+
+    def sliceAnon(self, i, text):
+        identifier = "a" + str(self.anons)
+        text[i] = identifier
+        self.anons += 1
+        j=i+1
+        while text[j] is not END:
+            if text[j] is ANON:
+                self.sliceAnon(j, text)
+            j+=1
+            if j >= len(text):
+                self.error("Expected function end " + END)
+        text += text[i:j+1]
+        del text[i+1:j+1]
+        f_identifiers.append(identifier)
 
 
     def error(self, message):
@@ -175,7 +197,6 @@ class Interpreter(object):
         return result
 
     def get_next_token(self):
-        print(self.current_token)
         while self.current_char is not None:
             if self.current_char in digits:
                 return Token(INTEGER, self.pos, self.integer())
@@ -245,9 +266,11 @@ class Interpreter(object):
 
         self.contexts.append(context)
 
-    def execute(self, pos, jmp):
+    def execute(self, function):
+        if function not in self.functions:
+            error("Missing function declaration - " + self.symbolize(function))
         jr = self.pos
-        self.setPos(pos)
+        self.setPos(self.functions[function])
         self.eat(FUNCTION)
 
         self.scope()
@@ -257,8 +280,7 @@ class Interpreter(object):
             if tok.type == END:
                 self.eat(END)
                 self.contexts.pop()
-                if jmp:
-                    self.setPos(jr)
+                self.setPos(jr)
                 return
             else:
                 self.statement()
@@ -271,10 +293,7 @@ class Interpreter(object):
         if tok.type == SYSCALL:
             return self.call()
         if tok.type == FUNCTION:
-            if tok.value in self.functions:
-                return self.execute(self.functions[tok.value], True)
-            elif tok.value is ANON:
-                return self.execute(self.pos-1, False)
+                return self.execute(tok.value)
         if tok.type == CONTROL:
             return self.flow()
         else:
@@ -288,47 +307,35 @@ class Interpreter(object):
 
         condition = self.bool_expr()
         func = self.current_token
-        if func.value not in self.functions and func.value is not ANON:
-            error("Function not initialized - " + func.value)
         if condition:
             if control.value == WHILE:
                 self.setPos(jr)
-                if func.value == ANON:
-                    pos = self.pos-1
-                else:
-                    pos = self.functions[func.value]
-                self.execute(pos, True)
+                self.execute(func.value)
             else:
-                if func.value == ANON:
-                    pos = self.pos-1
-                    self.execute(pos, False)
-                else:
-                    pos = self.functions[func.value]
-                    self.execute(pos, True)
+                self.execute(func.value)
+                if self.current_token.value is ELSE:
+                    self.eat(CONTROL)
+                    self.eat(FUNCTION)
 
         else:
-            if func.value == ANON:
-                self.skipAnon()                             # WRITE THIS FUNCTION
-            else:
-                self.eat(FUNCTION)
+            self.eat(FUNCTION)
             if self.current_token.value == ELSE:
                 self.eat(CONTROL)
-                if func.value == ANON:
-                    pos = self.pos-1
-                    self.execute(pos, False)
-                else:
-                    pos = self.functions[func.value]
-                    self.execute(pos, True)
+                self.execute(self.current_token.value)
 
     def bool_expr(self):
         comp = self.current_token
         self.eat(COMPARISON)
         val = self.expr()
+        if val is None:
+            self.error("expected expression but found - " + self.symbolize(self.current_token.type))
         result = True
         solo = True
         while self.current_token.type is not FUNCTION:
             solo = False
             expr = self.expr()
+            if expr is None:
+                self.error("expected function but found - " + self.symbolize(self.current_token.type))
             if comp.value == EQUAL:
                 result = result and val == expr
             if comp.value == GREATER:
@@ -456,7 +463,7 @@ class Interpreter(object):
     def run(self):
         if MAIN not in self.functions:
             self.error("No main found")
-        self.execute(self.functions[MAIN], False)
+        self.execute(MAIN)
 
 def main():
     if len(sys.argv) > 1:
